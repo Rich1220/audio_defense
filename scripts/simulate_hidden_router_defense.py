@@ -306,7 +306,12 @@ def main():
     rows = []
     for split_name, train, test in splits:
         print("[INFO] split:", split_name, "train", len(train), "test", len(test))
-        rows.append(run_split(split_name, train, test, candidates, y, args.seed, args.objective))
+        try:
+            rows.append(run_split(split_name, train, test, candidates, y, args.seed, args.objective))
+        except RuntimeError as exc:
+            if "No valid candidate" not in str(exc):
+                raise
+            print(f"[WARN] skipping split {split_name}: {exc}")
 
     result = {
         "features": args.features,

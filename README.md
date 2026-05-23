@@ -1,7 +1,14 @@
 # Hidden-State Router Defense
 
-This folder contains the model-agnostic defense code used in the AudioJailbreak
-experiments.
+This folder contains the end-to-end AudioJailbreak hidden-state defense
+workflow:
+
+1. build a benchmark manifest
+2. run a target audio-language model
+3. judge responses with Llama Guard or another safety judge
+4. compute the unsafe rate
+5. extract target-model hidden states
+6. train and simulate the hidden-state router defense
 
 The defense learns a lightweight router from a target model's hidden states. The
 router predicts whether the target model's response is likely unsafe, then
@@ -18,6 +25,36 @@ benchmark audio/text
 
 Llama Guard is only used offline to create training/evaluation labels. At router
 time, the defense uses hidden-state features, not Llama Guard.
+
+For the full from-zero command sequence, start with:
+
+```text
+EXPERIMENT_PIPELINE.md
+```
+
+## Included Scripts
+
+Benchmark and judging:
+
+| Purpose | Script |
+|---|---|
+| Build AudioJailbreak manifest | `scripts/build_audiojailbreak_manifest.py` |
+| Run Qwen2-Audio on AudioJailbreak | `scripts/run_qwen2_audio_audiojailbreak.py` |
+| Judge responses with Llama Guard | `scripts/judge_with_llamaguard.py` |
+| Summarize unsafe rate | `scripts/summarize_judge_labels.py` |
+
+Hidden-state extraction and defense:
+
+| Purpose | Script |
+|---|---|
+| Qwen2-Audio hidden extraction | `scripts/extract_qwen2_audio_hidden.py` |
+| New target model runner template | `scripts/target_model_runner_template.py` |
+| New hidden extractor template | `scripts/extractor_template.py` |
+| Validate exported hidden features | `scripts/validate_features.py` |
+| Single-layer probe sweep | `scripts/train_hidden_probes.py` |
+| Single-router defense simulation | `scripts/simulate_hidden_router_defense.py` |
+| Auto-layer router | `scripts/train_auto_layer_router.py` |
+| Category-transfer router | `scripts/train_category_transfer_router.py` |
 
 ## What You Need
 
@@ -61,13 +98,18 @@ Rows with non-null `extract_error` are excluded from training/evaluation.
 
 ## Install
 
-From the repository root:
+For only the router/defense scripts:
 
 ```bash
-python -m pip install -r defense_method/requirements.txt
+python -m pip install -r requirements.txt
 ```
 
-The core scripts need `numpy`, `scikit-learn`, and `matplotlib`.
+For the complete benchmark -> judge -> hidden extraction -> defense workflow:
+
+```bash
+python -m pip install -r requirements.txt
+python -m pip install -r requirements-experiment.txt
+```
 
 ## Run
 
@@ -88,6 +130,19 @@ OUT_DIR=outputs/my_model_defense \
 PYTHON=python \
 bash defense_method/run_hidden_router_pipeline.sh
 ```
+
+Optional category-transfer analysis:
+
+```bash
+python defense_method/scripts/train_category_transfer_router.py \
+  --features path/to/hidden_features.npz \
+  --meta path/to/hidden_meta.jsonl \
+  --out-dir outputs/my_model_category_transfer
+```
+
+This trains on one harmful category at a time and evaluates transfer to every
+eligible category. It is different from held-out category evaluation, which
+trains on all other categories and tests on one held-out category.
 
 Main outputs:
 
@@ -120,21 +175,29 @@ Report these numbers:
 
 ## Adapting a New Model
 
-The defense code does not call the target model. For a new model, write an
-extractor that produces the two files above.
+The judging and defense code are model-agnostic. Response generation and hidden
+extraction are model-specific.
 
-Start from:
+For a new model, implement:
 
 ```text
-defense_method/scripts/extractor_template.py
+scripts/target_model_runner_template.py
+scripts/extractor_template.py
 ```
 
-Project-specific extractors you can copy from:
+The runner should produce benchmark rows plus a response field. The extractor
+should produce:
 
 ```text
-scripts/extract_audiojailbreak_qwen2_hidden.py
-scripts/extract_audiojailbreak_qwen25_omni_hidden.py
-scripts/extract_audiojailbreak_ultravox_hidden.py
+hidden_features.npz
+hidden_meta.jsonl
+```
+
+Included Qwen2-Audio examples:
+
+```text
+scripts/run_qwen2_audio_audiojailbreak.py
+scripts/extract_qwen2_audio_hidden.py
 ```
 
 For each benchmark row, the extractor should:

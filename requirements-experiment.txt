@@ -1,0 +1,9 @@
+datasets
+huggingface_hub
+librosa
+soundfile
+torch
+transformers
+accelerate
+sentencepiece
+protobuf
