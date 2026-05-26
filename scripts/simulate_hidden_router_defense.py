@@ -118,7 +118,7 @@ def evaluate_defense(y_test, p_test, threshold):
 
 
 def run_split(split_name, train_idx, test_idx, candidates, y, seed, objective):
-    fit_idx, val_idx = split_stratified_indices(train_idx.tolist(), y, 0.80, seed)
+    fit_idx, val_idx = stratified_split_indices(train_idx.tolist(), y, 0.80, seed)
     best = None
     for cand_idx, (feature_set, pool, layer, x) in enumerate(candidates):
         if cand_idx % 25 == 0:
@@ -249,7 +249,7 @@ def main():
     y = data["labels"][valid_idx].astype(int)
     candidates = build_candidates(data, valid_idx)
 
-    train_idx, test_idx = split_stratified_indices(list(range(len(meta))), y, args.train_frac, args.seed)
+    train_idx, test_idx = stratified_split_indices(list(range(len(meta))), y, args.train_frac, args.seed)
     splits = [("random", train_idx, test_idx)]
     splits.extend(heldout_splits(meta, "source", y, max_splits=args.max_heldout_splits, sort_by_size=True))
     splits.extend(heldout_splits(meta, "category", y, max_splits=args.max_heldout_splits, sort_by_size=True))

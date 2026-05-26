@@ -379,7 +379,70 @@ Important fields:
 | `Recall` | Unsafe caught recall. |
 | `Threshold` | Validation-selected routing threshold. |
 
-## 8. Common Issues
+## 8. Phase 1 Interpretability on AudioJailbreak
+
+Phase 1 adds attention-deviation analysis on top of the hidden router. Start
+from an AudioJailbreak run that already has:
+
+```text
+outputs/audiojailbreak_origin_smoke20_manifest.jsonl
+outputs/audiojailbreak_origin_smoke20_qwen2audio_llamaguard.jsonl
+outputs/audiojailbreak_origin_smoke20_qwen2audio_hidden_features.npz
+outputs/audiojailbreak_origin_smoke20_qwen2audio_hidden_meta.jsonl
+```
+
+Run the hidden router if you have not already:
+
+```bash
+FEATURES=outputs/audiojailbreak_origin_smoke20_qwen2audio_hidden_features.npz \
+META=outputs/audiojailbreak_origin_smoke20_qwen2audio_hidden_meta.jsonl \
+OUT_DIR=outputs/audiojailbreak_origin_smoke20_qwen2audio_defense \
+PYTHON=python \
+SPLIT_MODE=random \
+OBJECTIVE=f1 \
+bash run_hidden_router_pipeline.sh
+```
+
+Extract attention-span features:
+
+```bash
+python scripts/extract_qwen2_audio_attention.py \
+  --manifest outputs/audiojailbreak_origin_smoke20_manifest.jsonl \
+  --responses outputs/audiojailbreak_origin_smoke20_qwen2audio_llamaguard.jsonl \
+  --out-jsonl outputs/audiojailbreak_origin_smoke20_qwen2audio_attention_rows.jsonl \
+  --out-md outputs/audiojailbreak_origin_smoke20_qwen2audio_attention_summary.md \
+  --model Qwen/Qwen2-Audio-7B-Instruct \
+  --device cuda:0 \
+  --layers 0,8,16,24,32
+```
+
+Analyze attention deviation:
+
+```bash
+python scripts/analyze_attention_deviation.py \
+  --input outputs/audiojailbreak_origin_smoke20_qwen2audio_attention_rows.jsonl \
+  --out-dir outputs/audiojailbreak_origin_smoke20_qwen2audio_attention_analysis
+```
+
+Read:
+
+```bash
+cat outputs/audiojailbreak_origin_smoke20_qwen2audio_attention_summary.md
+cat outputs/audiojailbreak_origin_smoke20_qwen2audio_attention_analysis/attention_feature_summary.md
+```
+
+Main figures:
+
+```text
+attention_by_layer_safe_vs_unsafe.png
+attention_delta_heatmap.png
+attention_deviation_pca.png
+```
+
+For stable conclusions, move from `smoke20` to `p100` or `full` after the smoke
+run works.
+
+## 9. Common Issues
 
 ### All labels are safe
 
@@ -416,4 +479,3 @@ Login and confirm gated model access:
 ```bash
 huggingface-cli login
 ```
-
