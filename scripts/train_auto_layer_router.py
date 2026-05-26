@@ -2,7 +2,7 @@
 import argparse
 import csv
 import json
-import random
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -11,7 +11,15 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from layer_utils import layer_positions, layer_regions as mapped_layer_regions
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from hidden_router.io import load_jsonl
+from hidden_router.layers import layer_positions, layer_regions as mapped_layer_regions
+from hidden_router.metrics import auprc, auroc, sigmoid
+from hidden_router.splits import heldout_splits, stratified_split_indices
+from hidden_router.thresholds import choose_threshold, threshold_metrics
 
 
 POOL_KEYS = [
@@ -26,91 +34,6 @@ REGIONS = [
     ("deep", 0.60, 0.90),
     ("final", 0.90, 1.00),
 ]
-
-
-def load_jsonl(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
-
-
-def sigmoid(x):
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -40, 40)))
-
-
-def auroc(y, scores):
-    y = np.asarray(y).astype(int)
-    scores = np.asarray(scores, dtype=float)
-    pos = scores[y == 1]
-    neg = scores[y == 0]
-    if len(pos) == 0 or len(neg) == 0:
-        return float("nan")
-    order = np.argsort(scores)
-    ranks = np.empty_like(order, dtype=float)
-    ranks[order] = np.arange(1, len(scores) + 1)
-    return float((ranks[y == 1].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg)))
-
-
-def auprc(y, scores):
-    y = np.asarray(y).astype(int)
-    scores = np.asarray(scores, dtype=float)
-    if y.sum() == 0:
-        return float("nan")
-    order = np.argsort(-scores)
-    ys = y[order]
-    tp = np.cumsum(ys)
-    fp = np.cumsum(1 - ys)
-    precision = tp / np.maximum(tp + fp, 1)
-    recall = tp / y.sum()
-    recall_prev = np.concatenate([[0.0], recall[:-1]])
-    return float(np.sum((recall - recall_prev) * precision))
-
-
-def stratified_split_indices(indices, y, train_frac, seed):
-    rng = random.Random(seed)
-    pos = [i for i in indices if int(y[i]) == 1]
-    neg = [i for i in indices if int(y[i]) == 0]
-    rng.shuffle(pos)
-    rng.shuffle(neg)
-    n_pos = int(round(len(pos) * train_frac))
-    n_neg = int(round(len(neg) * train_frac))
-    train = pos[:n_pos] + neg[:n_neg]
-    test = pos[n_pos:] + neg[n_neg:]
-    rng.shuffle(train)
-    rng.shuffle(test)
-    return np.asarray(train, dtype=int), np.asarray(test, dtype=int)
-
-
-def heldout_splits(meta, key, y, max_splits):
-    groups = defaultdict(list)
-    for i, row in enumerate(meta):
-        groups[str(row.get(key) or "None")].append(i)
-    all_idx = set(range(len(meta)))
-    splits = []
-    for value, test in sorted(groups.items(), key=lambda item: len(item[1]), reverse=True):
-        test_idx = np.asarray(test, dtype=int)
-        train_idx = np.asarray(sorted(all_idx - set(test)), dtype=int)
-        if len(set(y[test_idx].tolist())) < 2 or len(set(y[train_idx].tolist())) < 2:
-            continue
-        if y[test_idx].sum() < 2 or y[train_idx].sum() < 2:
-            continue
-        splits.append((f"{key}={value}", train_idx, test_idx))
-        if len(splits) >= max_splits:
-            break
-    return splits
-
-
-def layer_regions(num_layers):
-    rows = []
-    for name, start_frac, end_frac in REGIONS:
-        start = int(np.floor(start_frac * num_layers))
-        end = int(np.floor(end_frac * num_layers))
-        if name == REGIONS[-1][0]:
-            end = num_layers
-        end = max(end, start + 1)
-        start = min(start, num_layers - 1)
-        end = min(end, num_layers)
-        rows.append((name, start, end))
-    return rows
 
 
 def train_model(x_train, y_train, seed):
@@ -134,55 +57,6 @@ def train_model(x_train, y_train, seed):
 def predict_model(model, x):
     x_z = (x - model["mean"]) / np.maximum(model["std"], 1e-8)
     return sigmoid(x_z @ model["coef"] + model["bias"])
-
-
-def threshold_metrics(y, scores, threshold):
-    y = np.asarray(y).astype(int)
-    pred = (scores >= threshold).astype(int)
-    tp = int(((pred == 1) & (y == 1)).sum())
-    fp = int(((pred == 1) & (y == 0)).sum())
-    tn = int(((pred == 0) & (y == 0)).sum())
-    fn = int(((pred == 0) & (y == 1)).sum())
-    precision = tp / (tp + fp) if tp + fp else 0.0
-    recall = tp / (tp + fn) if tp + fn else 0.0
-    f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-    route_rate = float(pred.mean()) if len(pred) else 0.0
-    false_route = fp / int((y == 0).sum()) if int((y == 0).sum()) else 0.0
-    before_unsafe = float(y.mean()) if len(y) else 0.0
-    after_unsafe = fn / len(y) if len(y) else 0.0
-    reduction = (before_unsafe - after_unsafe) / before_unsafe if before_unsafe else 0.0
-    return {
-        "threshold": float(threshold),
-        "accuracy": (tp + tn) / len(y) if len(y) else 0.0,
-        "precision": precision,
-        "recall": recall,
-        "f1": f1,
-        "route_rate": route_rate,
-        "safe_false_route": false_route,
-        "unsafe_before": before_unsafe,
-        "unsafe_after": after_unsafe,
-        "relative_reduction": reduction,
-        "tp": tp,
-        "fp": fp,
-        "tn": tn,
-        "fn": fn,
-    }
-
-
-def choose_threshold(y_val, p_val, objective):
-    best = None
-    for threshold in np.linspace(0.05, 0.95, 19):
-        m = threshold_metrics(y_val, p_val, threshold)
-        if objective == "high_recall":
-            score = (m["recall"] >= 0.80, m["f1"], -m["route_rate"], m["recall"])
-        elif objective == "low_route":
-            score = (m["f1"], -m["route_rate"], m["recall"])
-        else:
-            score = (m["f1"], m["recall"], -m["route_rate"])
-        if best is None or score > best["score"]:
-            best = {"threshold": float(threshold), "score": score, "val_metrics": m}
-    best.pop("score", None)
-    return best
 
 
 def get_x(data, pool_key, valid_idx, layer_pos):
@@ -646,9 +520,9 @@ def main():
     train_idx, test_idx = stratified_split_indices(list(range(len(meta))), y, args.train_frac, args.seed)
     splits = [("random", train_idx, test_idx)]
     if args.split_mode in {"all", "source"}:
-        splits.extend(heldout_splits(meta, "source", y, args.max_heldout_splits))
+        splits.extend(heldout_splits(meta, "source", y, max_splits=args.max_heldout_splits, sort_by_size=True))
     if args.split_mode in {"all", "category"}:
-        splits.extend(heldout_splits(meta, "category", y, args.max_heldout_splits))
+        splits.extend(heldout_splits(meta, "category", y, max_splits=args.max_heldout_splits, sort_by_size=True))
     if args.split_mode == "random":
         splits = [("random", train_idx, test_idx)]
 

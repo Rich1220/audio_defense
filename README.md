@@ -32,6 +32,16 @@ For the full from-zero command sequence, start with:
 EXPERIMENT_PIPELINE.md
 ```
 
+## Documentation
+
+| File | Purpose |
+|---|---|
+| `docs/USAGE.md` | Benchmark-specific run guide for AudioJailbreak, JALMBench, and SACRED-Bench. |
+| `docs/ARCHITECTURE.md` | Repository layout, code structure, and artifact naming. |
+| `METHOD_DETAILS.md` | Method formulas, metrics, training flow, and defense simulation details. |
+| `ADAPTER_GUIDE.md` | How to plug in a new target model or benchmark. |
+| `EXPERIMENT_PIPELINE.md` | Full from-zero command sequence. |
+
 ## Included Scripts
 
 Benchmark and judging:
@@ -39,6 +49,8 @@ Benchmark and judging:
 | Purpose | Script |
 |---|---|
 | Build AudioJailbreak manifest | `scripts/build_audiojailbreak_manifest.py` |
+| Build generic Hugging Face soundfolder manifest | `scripts/build_hf_soundfolder_manifest.py` |
+| Build JALMBench manifest | `scripts/build_jalmbench_manifest.py` |
 | Run Qwen2-Audio on AudioJailbreak | `scripts/run_qwen2_audio_audiojailbreak.py` |
 | Judge responses with Llama Guard | `scripts/judge_with_llamaguard.py` |
 | Summarize unsafe rate | `scripts/summarize_judge_labels.py` |

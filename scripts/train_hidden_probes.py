@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import random
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -10,75 +10,15 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from layer_utils import layer_positions, selected_position_layers
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-
-def load_jsonl(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
-
-
-def sigmoid(x):
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -40, 40)))
-
-
-def auroc(y, scores):
-    y = np.asarray(y).astype(int)
-    scores = np.asarray(scores, dtype=float)
-    pos = scores[y == 1]
-    neg = scores[y == 0]
-    if len(pos) == 0 or len(neg) == 0:
-        return float("nan")
-    order = np.argsort(scores)
-    ranks = np.empty_like(order, dtype=float)
-    ranks[order] = np.arange(1, len(scores) + 1)
-    return float((ranks[y == 1].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg)))
-
-
-def auprc(y, scores):
-    y = np.asarray(y).astype(int)
-    scores = np.asarray(scores, dtype=float)
-    if y.sum() == 0:
-        return float("nan")
-    order = np.argsort(-scores)
-    ys = y[order]
-    tp = np.cumsum(ys)
-    fp = np.cumsum(1 - ys)
-    precision = tp / np.maximum(tp + fp, 1)
-    recall = tp / y.sum()
-    recall_prev = np.concatenate([[0.0], recall[:-1]])
-    return float(np.sum((recall - recall_prev) * precision))
-
-
-def threshold_metrics(y, scores, thresholds):
-    rows = []
-    y = np.asarray(y).astype(int)
-    scores = np.asarray(scores, dtype=float)
-    for threshold in thresholds:
-        pred = (scores >= threshold).astype(int)
-        tp = int(((pred == 1) & (y == 1)).sum())
-        fp = int(((pred == 1) & (y == 0)).sum())
-        tn = int(((pred == 0) & (y == 0)).sum())
-        fn = int(((pred == 0) & (y == 1)).sum())
-        precision = tp / (tp + fp) if tp + fp else 0.0
-        recall = tp / (tp + fn) if tp + fn else 0.0
-        f1 = 2 * precision * recall / (precision + recall) if precision + recall else 0.0
-        rows.append(
-            {
-                "threshold": threshold,
-                "accuracy": (tp + tn) / len(y) if len(y) else 0.0,
-                "precision": precision,
-                "recall": recall,
-                "f1": f1,
-                "route_rate": float(pred.mean()) if len(pred) else 0.0,
-                "residual_unsafe_rate": fn / len(y) if len(y) else 0.0,
-                "tp": tp,
-                "fp": fp,
-                "tn": tn,
-                "fn": fn,
-            }
-        )
-    return rows
+from hidden_router.io import load_jsonl
+from hidden_router.layers import layer_positions, selected_position_layers
+from hidden_router.metrics import auprc, auroc
+from hidden_router.splits import heldout_splits, stratified_random_split
+from hidden_router.thresholds import threshold_sweep_metrics
 
 
 def fit_predict(x_train, y_train, x_test, seed):
@@ -98,35 +38,6 @@ def fit_predict(x_train, y_train, x_test, seed):
         "coef": clf.coef_[0],
         "bias": float(clf.intercept_[0]),
     }
-
-
-def stratified_random_split(y, train_frac, seed):
-    rng = random.Random(seed)
-    pos = [i for i, v in enumerate(y) if int(v) == 1]
-    neg = [i for i, v in enumerate(y) if int(v) == 0]
-    rng.shuffle(pos)
-    rng.shuffle(neg)
-    train = pos[: int(round(len(pos) * train_frac))] + neg[: int(round(len(neg) * train_frac))]
-    test = pos[int(round(len(pos) * train_frac)) :] + neg[int(round(len(neg) * train_frac)) :]
-    rng.shuffle(train)
-    rng.shuffle(test)
-    return np.asarray(train, dtype=int), np.asarray(test, dtype=int)
-
-
-def heldout_splits(meta, key, y, min_test_pos=2, min_train_pos=2):
-    groups = defaultdict(list)
-    for i, row in enumerate(meta):
-        groups[str(row.get(key) or "None")].append(i)
-    splits = []
-    for value, test_idx in sorted(groups.items()):
-        test_idx = np.asarray(test_idx, dtype=int)
-        train_idx = np.asarray([i for i in range(len(meta)) if i not in set(test_idx.tolist())], dtype=int)
-        if y[test_idx].sum() < min_test_pos or y[train_idx].sum() < min_train_pos:
-            continue
-        if len(set(y[test_idx].tolist())) < 2 or len(set(y[train_idx].tolist())) < 2:
-            continue
-        splits.append((f"{key}={value}", train_idx, test_idx))
-    return splits
 
 
 def pca2(x):
@@ -358,7 +269,7 @@ def main():
             "auprc": auprc(y[test_idx], probs),
         }
         if split_name == "random":
-            result["threshold_metrics"] = threshold_metrics(y[test_idx], probs, thresholds)
+            result["threshold_metrics"] = threshold_sweep_metrics(y[test_idx], probs, thresholds)
         results.append(result)
         if split_name == "random" and feature_set == "hidden" and (best_model is None or result["auroc"] > best_model["auroc"]):
             best_model = dict(result)
@@ -412,7 +323,7 @@ def main():
                 best_layer,
             )
 
-    best_model["threshold_metrics"] = threshold_metrics(y[random_test], best_probs, thresholds)
+    best_model["threshold_metrics"] = threshold_sweep_metrics(y[random_test], best_probs, thresholds)
     serializable_results = []
     for row in results:
         item = {k: v for k, v in row.items() if k != "threshold_metrics"}

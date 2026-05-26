@@ -2,7 +2,7 @@
 import argparse
 import csv
 import json
-import random
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -11,7 +11,15 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from layer_utils import layer_regions as mapped_layer_regions
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from hidden_router.io import load_jsonl
+from hidden_router.layers import layer_regions as mapped_layer_regions
+from hidden_router.metrics import auprc, auroc, sigmoid
+from hidden_router.splits import stratified_split_indices
+from hidden_router.thresholds import threshold_for_route_rate
 
 
 POOL_KEYS = [
@@ -26,60 +34,6 @@ REGIONS = [
     ("deep", 0.60, 0.90),
     ("final", 0.90, 1.00),
 ]
-
-
-def load_jsonl(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
-
-
-def sigmoid(x):
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -40, 40)))
-
-
-def auroc(y, scores):
-    y = np.asarray(y).astype(int)
-    scores = np.asarray(scores, dtype=float)
-    pos = scores[y == 1]
-    neg = scores[y == 0]
-    if len(pos) == 0 or len(neg) == 0:
-        return float("nan")
-    order = np.argsort(scores)
-    ranks = np.empty_like(order, dtype=float)
-    ranks[order] = np.arange(1, len(scores) + 1)
-    return float((ranks[y == 1].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg)))
-
-
-def auprc(y, scores):
-    y = np.asarray(y).astype(int)
-    scores = np.asarray(scores, dtype=float)
-    if y.sum() == 0:
-        return float("nan")
-    order = np.argsort(-scores)
-    ys = y[order]
-    tp = np.cumsum(ys)
-    fp = np.cumsum(1 - ys)
-    precision = tp / np.maximum(tp + fp, 1)
-    recall = tp / y.sum()
-    recall_prev = np.concatenate([[0.0], recall[:-1]])
-    return float(np.sum((recall - recall_prev) * precision))
-
-
-def stratified_split(indices, y, train_frac, seed):
-    rng = random.Random(seed)
-    pos = [i for i in indices if int(y[i]) == 1]
-    neg = [i for i in indices if int(y[i]) == 0]
-    rng.shuffle(pos)
-    rng.shuffle(neg)
-    n_pos = max(1, int(round(len(pos) * train_frac))) if len(pos) > 1 else len(pos)
-    n_neg = max(1, int(round(len(neg) * train_frac))) if len(neg) > 1 else len(neg)
-    n_pos = min(n_pos, len(pos) - 1) if len(pos) > 1 else n_pos
-    n_neg = min(n_neg, len(neg) - 1) if len(neg) > 1 else n_neg
-    train = pos[:n_pos] + neg[:n_neg]
-    test = pos[n_pos:] + neg[n_neg:]
-    rng.shuffle(train)
-    rng.shuffle(test)
-    return np.asarray(train, dtype=int), np.asarray(test, dtype=int)
 
 
 def train_model(x_train, y_train, seed):
@@ -103,14 +57,6 @@ def train_model(x_train, y_train, seed):
 def predict_model(model, x):
     x_z = (x - model["mean"]) / np.maximum(model["std"], 1e-8)
     return sigmoid(x_z @ model["coef"] + model["bias"])
-
-
-def threshold_for_route_rate(scores, route_rate):
-    scores = np.asarray(scores, dtype=float)
-    if len(scores) == 0:
-        return 1.0
-    q = max(0.0, min(1.0, 1.0 - route_rate))
-    return float(np.quantile(scores, q))
 
 
 def metrics_at_threshold(y, scores, threshold, budget_route_rate):
@@ -445,8 +391,20 @@ def main():
     selected_by_train = {}
     for train_cat in train_categories:
         source_idx = category_to_indices[train_cat]
-        train_pool_idx, same_test_idx = stratified_split(source_idx, y, args.train_frac, args.seed)
-        fit_idx, val_idx = stratified_split(train_pool_idx.tolist(), y, args.fit_frac, args.seed)
+        train_pool_idx, same_test_idx = stratified_split_indices(
+            source_idx,
+            y,
+            args.train_frac,
+            args.seed,
+            keep_both_classes=True,
+        )
+        fit_idx, val_idx = stratified_split_indices(
+            train_pool_idx.tolist(),
+            y,
+            args.fit_frac,
+            args.seed,
+            keep_both_classes=True,
+        )
         if len(set(y[fit_idx].tolist())) < 2 or len(set(y[val_idx].tolist())) < 2:
             print("[WARN] skip train category due to bad split:", train_cat)
             continue

@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 import argparse
-import json
+import sys
 from collections import Counter
 from pathlib import Path
 
 import numpy as np
 
-from layer_utils import layer_indices_for
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from hidden_router.io import load_jsonl
+from hidden_router.layers import layer_indices_for
 
 
 REQUIRED_ARRAYS = [
@@ -19,11 +24,6 @@ REQUIRED_ARRAYS = [
     "score_names",
     "pool_names",
 ]
-
-
-def load_jsonl(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
 
 
 def fail(message):

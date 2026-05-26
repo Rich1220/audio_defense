@@ -2,6 +2,7 @@ datasets
 huggingface_hub
 librosa
 soundfile
+pyarrow
 torch
 transformers
 accelerate

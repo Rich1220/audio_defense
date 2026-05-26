@@ -53,7 +53,7 @@ PY
 
 ## 1. Build Benchmark Manifest
 
-Smoke test:
+AudioJailbreak smoke test:
 
 ```bash
 python scripts/build_audiojailbreak_manifest.py \
@@ -80,6 +80,92 @@ python scripts/build_audiojailbreak_manifest.py \
 Use `--target-model-filter TEXT` only if you have inspected the dataset and want
 to keep rows whose `target_model` contains `TEXT`.
 
+### Alternative: SACRED-Bench Multi-speaker Dialogue
+
+SACRED-Bench is also hosted on Hugging Face and its `Multi-speaker_Dialogue`
+folder is a soundfolder-style audio benchmark. Build a manifest with:
+
+```bash
+python scripts/build_hf_soundfolder_manifest.py \
+  --repo-id tsinghua-ee/SACRED-Bench \
+  --repo-subdir Multi-speaker_Dialogue/test \
+  --limit 20 \
+  --download-audio \
+  --audio-dir outputs/sacred_multispeaker_audio \
+  --out outputs/sacred_multispeaker_smoke20_manifest.jsonl
+```
+
+Full run:
+
+```bash
+python scripts/build_hf_soundfolder_manifest.py \
+  --repo-id tsinghua-ee/SACRED-Bench \
+  --repo-subdir Multi-speaker_Dialogue/test \
+  --limit 0 \
+  --download-audio \
+  --audio-dir outputs/sacred_multispeaker_audio \
+  --out outputs/sacred_multispeaker_full_manifest.jsonl
+```
+
+If the dataset metadata does not expose an original harmful prompt, the manifest
+will still contain `local_audio`, but `prompt` may be empty. In that case,
+Llama Guard can still judge the target model response, but prompt-conditioned
+judging is weaker. Prefer metadata with a prompt/instruction field when
+available.
+
+### Alternative: JALMBench ADiv and SSJ
+
+JALMBench is hosted as a Hugging Face `datasets` repo with named subsets. The
+two subsets used here are:
+
+```text
+ADiv: 700 rows
+SSJ:  246 rows
+```
+
+Build smoke manifests first:
+
+```bash
+python scripts/build_jalmbench_manifest.py \
+  --subset ADiv \
+  --split train \
+  --limit 20 \
+  --save-audio \
+  --audio-dir outputs/jalmbench_audio \
+  --out outputs/jalmbench_adiv_smoke20_manifest.jsonl
+
+python scripts/build_jalmbench_manifest.py \
+  --subset SSJ \
+  --split train \
+  --limit 20 \
+  --save-audio \
+  --audio-dir outputs/jalmbench_audio \
+  --out outputs/jalmbench_ssj_smoke20_manifest.jsonl
+```
+
+Full manifests:
+
+```bash
+python scripts/build_jalmbench_manifest.py \
+  --subset ADiv \
+  --split train \
+  --limit 0 \
+  --save-audio \
+  --audio-dir outputs/jalmbench_audio \
+  --out outputs/jalmbench_adiv_full_manifest.jsonl
+
+python scripts/build_jalmbench_manifest.py \
+  --subset SSJ \
+  --split train \
+  --limit 0 \
+  --save-audio \
+  --audio-dir outputs/jalmbench_audio \
+  --out outputs/jalmbench_ssj_full_manifest.jsonl
+```
+
+The manifest preserves JALMBench metadata and normalizes the text prompt to the
+`prompt` field. `local_audio` points to a materialized wav file for Qwen2-Audio.
+
 ## 2. Run Target Model
 
 Qwen2-Audio smoke run:
@@ -88,6 +174,26 @@ Qwen2-Audio smoke run:
 python scripts/run_qwen2_audio_audiojailbreak.py \
   --manifest outputs/audiojailbreak_origin_smoke20_manifest.jsonl \
   --out outputs/audiojailbreak_origin_smoke20_qwen2audio_responses.jsonl \
+  --model Qwen/Qwen2-Audio-7B-Instruct \
+  --device cuda:0 \
+  --prompt-mode safety \
+  --overwrite
+```
+
+JALMBench Qwen2-Audio full runs:
+
+```bash
+python scripts/run_qwen2_audio_audiojailbreak.py \
+  --manifest outputs/jalmbench_adiv_full_manifest.jsonl \
+  --out outputs/jalmbench_adiv_full_qwen2audio_responses.jsonl \
+  --model Qwen/Qwen2-Audio-7B-Instruct \
+  --device cuda:0 \
+  --prompt-mode safety \
+  --overwrite
+
+python scripts/run_qwen2_audio_audiojailbreak.py \
+  --manifest outputs/jalmbench_ssj_full_manifest.jsonl \
+  --out outputs/jalmbench_ssj_full_qwen2audio_responses.jsonl \
   --model Qwen/Qwen2-Audio-7B-Instruct \
   --device cuda:0 \
   --prompt-mode safety \
@@ -120,12 +226,46 @@ python scripts/judge_with_llamaguard.py \
   --overwrite
 ```
 
+JALMBench Qwen2-Audio judge runs:
+
+```bash
+python scripts/judge_with_llamaguard.py \
+  --input outputs/jalmbench_adiv_full_qwen2audio_responses.jsonl \
+  --out outputs/jalmbench_adiv_full_qwen2audio_llamaguard.jsonl \
+  --response-key qwen2_audio_response \
+  --prompt-key prompt \
+  --model meta-llama/Llama-Guard-3-8B \
+  --device cuda:0 \
+  --overwrite
+
+python scripts/judge_with_llamaguard.py \
+  --input outputs/jalmbench_ssj_full_qwen2audio_responses.jsonl \
+  --out outputs/jalmbench_ssj_full_qwen2audio_llamaguard.jsonl \
+  --response-key qwen2_audio_response \
+  --prompt-key prompt \
+  --model meta-llama/Llama-Guard-3-8B \
+  --device cuda:0 \
+  --overwrite
+```
+
 Summarize unsafe rate:
 
 ```bash
 python scripts/summarize_judge_labels.py \
   --input outputs/audiojailbreak_origin_smoke20_qwen2audio_llamaguard.jsonl \
   --out-md outputs/audiojailbreak_origin_smoke20_qwen2audio_safety_summary.md
+```
+
+JALMBench summaries:
+
+```bash
+python scripts/summarize_judge_labels.py \
+  --input outputs/jalmbench_adiv_full_qwen2audio_llamaguard.jsonl \
+  --out-md outputs/jalmbench_adiv_full_qwen2audio_safety_summary.md
+
+python scripts/summarize_judge_labels.py \
+  --input outputs/jalmbench_ssj_full_qwen2audio_llamaguard.jsonl \
+  --out-md outputs/jalmbench_ssj_full_qwen2audio_safety_summary.md
 ```
 
 The router uses:
@@ -148,6 +288,26 @@ python scripts/extract_qwen2_audio_hidden.py \
   --responses outputs/audiojailbreak_origin_smoke20_qwen2audio_llamaguard.jsonl \
   --out-npz outputs/audiojailbreak_origin_smoke20_qwen2audio_hidden_features.npz \
   --out-meta outputs/audiojailbreak_origin_smoke20_qwen2audio_hidden_meta.jsonl \
+  --model Qwen/Qwen2-Audio-7B-Instruct \
+  --device cuda:0
+```
+
+JALMBench all-layer hidden extraction:
+
+```bash
+python scripts/extract_qwen2_audio_hidden.py \
+  --manifest outputs/jalmbench_adiv_full_manifest.jsonl \
+  --responses outputs/jalmbench_adiv_full_qwen2audio_llamaguard.jsonl \
+  --out-npz outputs/jalmbench_adiv_full_qwen2audio_hidden_features.npz \
+  --out-meta outputs/jalmbench_adiv_full_qwen2audio_hidden_meta.jsonl \
+  --model Qwen/Qwen2-Audio-7B-Instruct \
+  --device cuda:0
+
+python scripts/extract_qwen2_audio_hidden.py \
+  --manifest outputs/jalmbench_ssj_full_manifest.jsonl \
+  --responses outputs/jalmbench_ssj_full_qwen2audio_llamaguard.jsonl \
+  --out-npz outputs/jalmbench_ssj_full_qwen2audio_hidden_features.npz \
+  --out-meta outputs/jalmbench_ssj_full_qwen2audio_hidden_meta.jsonl \
   --model Qwen/Qwen2-Audio-7B-Instruct \
   --device cuda:0
 ```
@@ -215,6 +375,27 @@ OUT_DIR=outputs/audiojailbreak_origin_full_qwen2audio_defense \
 PYTHON=python \
 SPLIT_MODE=all \
 OBJECTIVE=f1 \
+bash run_hidden_router_pipeline.sh
+```
+
+For JALMBench full runs, use random split first. ADiv and SSJ are each one
+subset/attack type, so source/category held-out splits may not be meaningful.
+
+```bash
+FEATURES=outputs/jalmbench_adiv_full_qwen2audio_hidden_features.npz \
+META=outputs/jalmbench_adiv_full_qwen2audio_hidden_meta.jsonl \
+OUT_DIR=outputs/jalmbench_adiv_full_qwen2audio_defense \
+PYTHON=python \
+SPLIT_MODE=random \
+OBJECTIVE=high_recall \
+bash run_hidden_router_pipeline.sh
+
+FEATURES=outputs/jalmbench_ssj_full_qwen2audio_hidden_features.npz \
+META=outputs/jalmbench_ssj_full_qwen2audio_hidden_meta.jsonl \
+OUT_DIR=outputs/jalmbench_ssj_full_qwen2audio_defense \
+PYTHON=python \
+SPLIT_MODE=random \
+OBJECTIVE=high_recall \
 bash run_hidden_router_pipeline.sh
 ```
 

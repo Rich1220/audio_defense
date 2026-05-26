@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import json
-import random
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -10,32 +10,17 @@ import numpy as np
 from sklearn.linear_model import LogisticRegression
 from sklearn.preprocessing import StandardScaler
 
-from layer_utils import layer_positions, selected_position_layers
+ROOT_DIR = Path(__file__).resolve().parents[1]
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+
+from hidden_router.io import load_jsonl
+from hidden_router.layers import layer_positions, selected_position_layers
+from hidden_router.metrics import auroc, sigmoid
+from hidden_router.splits import heldout_splits, stratified_split_indices
 
 
 SAFE_ROUTE_RESPONSE = "I'm sorry, but I can't assist with unsafe or harmful requests."
-
-
-def load_jsonl(path):
-    with open(path, "r", encoding="utf-8") as f:
-        return [json.loads(line) for line in f if line.strip()]
-
-
-def sigmoid(x):
-    return 1.0 / (1.0 + np.exp(-np.clip(x, -40, 40)))
-
-
-def auroc(y, scores):
-    y = np.asarray(y).astype(int)
-    scores = np.asarray(scores, dtype=float)
-    pos = scores[y == 1]
-    neg = scores[y == 0]
-    if len(pos) == 0 or len(neg) == 0:
-        return float("nan")
-    order = np.argsort(scores)
-    ranks = np.empty_like(order, dtype=float)
-    ranks[order] = np.arange(1, len(scores) + 1)
-    return float((ranks[y == 1].sum() - len(pos) * (len(pos) + 1) / 2) / (len(pos) * len(neg)))
 
 
 def fit_model(x_train, y_train, seed):
@@ -53,40 +38,6 @@ def fit_model(x_train, y_train, seed):
 
 def predict(model, x):
     return sigmoid(((x - model["mean"]) / model["std"]) @ model["coef"] + model["bias"])
-
-
-def split_stratified_indices(indices, y, train_frac, seed):
-    rng = random.Random(seed)
-    pos = [i for i in indices if int(y[i]) == 1]
-    neg = [i for i in indices if int(y[i]) == 0]
-    rng.shuffle(pos)
-    rng.shuffle(neg)
-    n_pos = int(round(len(pos) * train_frac))
-    n_neg = int(round(len(neg) * train_frac))
-    train = pos[:n_pos] + neg[:n_neg]
-    test = pos[n_pos:] + neg[n_neg:]
-    rng.shuffle(train)
-    rng.shuffle(test)
-    return np.asarray(train, dtype=int), np.asarray(test, dtype=int)
-
-
-def heldout_splits(meta, key, y, max_splits):
-    groups = defaultdict(list)
-    for i, row in enumerate(meta):
-        groups[str(row.get(key) or "None")].append(i)
-    splits = []
-    all_idx = set(range(len(meta)))
-    for value, test in sorted(groups.items(), key=lambda item: len(item[1]), reverse=True):
-        test_idx = np.asarray(test, dtype=int)
-        train_idx = np.asarray(sorted(all_idx - set(test)), dtype=int)
-        if len(set(y[test_idx].tolist())) < 2 or len(set(y[train_idx].tolist())) < 2:
-            continue
-        if y[test_idx].sum() < 2 or y[train_idx].sum() < 2:
-            continue
-        splits.append((f"{key}={value}", train_idx, test_idx))
-        if len(splits) >= max_splits:
-            break
-    return splits
 
 
 def build_candidates(data, valid_idx):
@@ -300,8 +251,8 @@ def main():
 
     train_idx, test_idx = split_stratified_indices(list(range(len(meta))), y, args.train_frac, args.seed)
     splits = [("random", train_idx, test_idx)]
-    splits.extend(heldout_splits(meta, "source", y, args.max_heldout_splits))
-    splits.extend(heldout_splits(meta, "category", y, args.max_heldout_splits))
+    splits.extend(heldout_splits(meta, "source", y, max_splits=args.max_heldout_splits, sort_by_size=True))
+    splits.extend(heldout_splits(meta, "category", y, max_splits=args.max_heldout_splits, sort_by_size=True))
 
     rows = []
     for split_name, train, test in splits:
