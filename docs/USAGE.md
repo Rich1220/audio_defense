@@ -195,7 +195,34 @@ SSJ
 
 ### Build Manifests
 
-Smoke test:
+Recommended combined smoke test. This writes ADiv and SSJ into one manifest:
+
+```bash
+python scripts/build_jalmbench_manifest.py \
+  --subset all \
+  --split train \
+  --limit 20 \
+  --save-audio \
+  --audio-dir outputs/jalmbench_audio \
+  --out outputs/jalmbench_all_smoke20_manifest.jsonl
+```
+
+`--limit` is applied per subset, so `--subset all --limit 20` writes up to 40
+rows total.
+
+Combined full run:
+
+```bash
+python scripts/build_jalmbench_manifest.py \
+  --subset all \
+  --split train \
+  --limit 0 \
+  --save-audio \
+  --audio-dir outputs/jalmbench_audio \
+  --out outputs/jalmbench_all_full_manifest.jsonl
+```
+
+You can still build subsets separately:
 
 ```bash
 python scripts/build_jalmbench_manifest.py \
@@ -213,48 +240,33 @@ python scripts/build_jalmbench_manifest.py \
   --save-audio \
   --audio-dir outputs/jalmbench_audio \
   --out outputs/jalmbench_ssj_smoke20_manifest.jsonl
-```
-
-Full run:
-
-```bash
-python scripts/build_jalmbench_manifest.py \
-  --subset ADiv \
-  --split train \
-  --limit 0 \
-  --save-audio \
-  --audio-dir outputs/jalmbench_audio \
-  --out outputs/jalmbench_adiv_full_manifest.jsonl
-
 python scripts/build_jalmbench_manifest.py \
   --subset SSJ \
   --split train \
-  --limit 0 \
+  --limit 20 \
   --save-audio \
   --audio-dir outputs/jalmbench_audio \
-  --out outputs/jalmbench_ssj_full_manifest.jsonl
+  --out outputs/jalmbench_ssj_smoke20_manifest.jsonl
 ```
 
 ### Run Qwen2-Audio
 
 ```bash
 python scripts/run_qwen2_audio_audiojailbreak.py \
-  --manifest outputs/jalmbench_adiv_smoke20_manifest.jsonl \
-  --out outputs/jalmbench_adiv_smoke20_qwen2audio_responses.jsonl \
+  --manifest outputs/jalmbench_all_smoke20_manifest.jsonl \
+  --out outputs/jalmbench_all_smoke20_qwen2audio_responses.jsonl \
   --model Qwen/Qwen2-Audio-7B-Instruct \
   --device cuda:0 \
   --prompt-mode safety \
   --overwrite
 ```
 
-For SSJ, replace `jalmbench_adiv_smoke20` with `jalmbench_ssj_smoke20`.
-
 ### Judge Responses
 
 ```bash
 python scripts/judge_with_llamaguard.py \
-  --input outputs/jalmbench_adiv_smoke20_qwen2audio_responses.jsonl \
-  --out outputs/jalmbench_adiv_smoke20_qwen2audio_llamaguard.jsonl \
+  --input outputs/jalmbench_all_smoke20_qwen2audio_responses.jsonl \
+  --out outputs/jalmbench_all_smoke20_qwen2audio_llamaguard.jsonl \
   --response-key qwen2_audio_response \
   --prompt-key prompt \
   --model meta-llama/Llama-Guard-3-8B \
@@ -266,8 +278,8 @@ Summarize labels:
 
 ```bash
 python scripts/summarize_judge_labels.py \
-  --input outputs/jalmbench_adiv_smoke20_qwen2audio_llamaguard.jsonl \
-  --out-md outputs/jalmbench_adiv_smoke20_qwen2audio_safety_summary.md
+  --input outputs/jalmbench_all_smoke20_qwen2audio_llamaguard.jsonl \
+  --out-md outputs/jalmbench_all_smoke20_qwen2audio_safety_summary.md
 ```
 
 If all labels are safe, the binary router cannot train. Increase the limit, for
@@ -277,10 +289,10 @@ example `--limit 100`, or run the full subset.
 
 ```bash
 python scripts/extract_qwen2_audio_hidden.py \
-  --manifest outputs/jalmbench_adiv_smoke20_manifest.jsonl \
-  --responses outputs/jalmbench_adiv_smoke20_qwen2audio_llamaguard.jsonl \
-  --out-npz outputs/jalmbench_adiv_smoke20_qwen2audio_hidden_features.npz \
-  --out-meta outputs/jalmbench_adiv_smoke20_qwen2audio_hidden_meta.jsonl \
+  --manifest outputs/jalmbench_all_smoke20_manifest.jsonl \
+  --responses outputs/jalmbench_all_smoke20_qwen2audio_llamaguard.jsonl \
+  --out-npz outputs/jalmbench_all_smoke20_qwen2audio_hidden_features.npz \
+  --out-meta outputs/jalmbench_all_smoke20_qwen2audio_hidden_meta.jsonl \
   --model Qwen/Qwen2-Audio-7B-Instruct \
   --device cuda:0
 ```
@@ -291,16 +303,14 @@ JALMBench subsets are usually single-source/single-category runs, so start with
 random split:
 
 ```bash
-FEATURES=outputs/jalmbench_adiv_smoke20_qwen2audio_hidden_features.npz \
-META=outputs/jalmbench_adiv_smoke20_qwen2audio_hidden_meta.jsonl \
-OUT_DIR=outputs/jalmbench_adiv_smoke20_qwen2audio_defense \
+FEATURES=outputs/jalmbench_all_smoke20_qwen2audio_hidden_features.npz \
+META=outputs/jalmbench_all_smoke20_qwen2audio_hidden_meta.jsonl \
+OUT_DIR=outputs/jalmbench_all_smoke20_qwen2audio_defense \
 PYTHON=python \
-SPLIT_MODE=random \
+SPLIT_MODE=all \
 OBJECTIVE=high_recall \
 bash run_hidden_router_pipeline.sh
 ```
-
-For SSJ, replace `jalmbench_adiv_smoke20` with `jalmbench_ssj_smoke20`.
 
 ## 5. SACRED-Bench
 

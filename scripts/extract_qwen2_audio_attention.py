@@ -103,7 +103,8 @@ def find_spans(input_ids, tokenizer):
 def parse_layers(value, n_layers):
     if not value:
         return list(range(n_layers))
-    return [int(part.strip()) for part in value.split(",") if part.strip()]
+    requested = [int(part.strip()) for part in value.split(",") if part.strip()]
+    return [layer for layer in requested if 0 <= layer < n_layers]
 
 
 def summarize_attention(attentions, spans, layers):
@@ -181,6 +182,11 @@ def main():
     parser.add_argument("--layers", default="", help="Comma-separated layer ids. Empty means all attention layers.")
     parser.add_argument("--limit", type=int, default=0)
     parser.add_argument("--local-files-only", action="store_true")
+    parser.add_argument(
+        "--overwrite",
+        action="store_true",
+        help="Accepted for CLI consistency. This script overwrites output files by default.",
+    )
     args = parser.parse_args()
 
     rows = merge_manifest_and_responses(args.manifest, args.responses, args.limit)
@@ -235,6 +241,18 @@ def main():
                 )
             if selected_layers is None:
                 selected_layers = parse_layers(args.layers, len(output.attentions))
+                if not selected_layers:
+                    raise ValueError(
+                        f"no valid attention layers selected from {args.layers!r}; "
+                        f"model returned {len(output.attentions)} attention tensors"
+                    )
+                if args.layers:
+                    print(
+                        "[INFO] attention layers:",
+                        selected_layers,
+                        f"(available 0-{len(output.attentions) - 1})",
+                        flush=True,
+                    )
             summary, layer_rows = summarize_attention(output.attentions, spans, selected_layers)
             out_row.update(summary)
             out_row.update(
@@ -263,4 +281,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
